@@ -11,9 +11,9 @@ input = open(inputFile,'r')
 x = []
 y = []
 
-#Read each line of the input file.
-#Storing the x-coordinates into x.
-#Storing the y-coordinates into y.
+# Read each line of the input file.
+# Storing the x-coordinates into x.
+# Storing the y-coordinates into y.
 line = input.readline()
 while line:
 	coordinates = line.split(',')
@@ -24,8 +24,8 @@ while line:
 input.close()
 
 
-#Adding the input points to the plot so we can visualize what the points look like.
-#The scatter() function will draw just the points.
+# Adding the input points to the plot so we can visualize what the points look like.
+# The scatter() function will draw just the points.
 plt.scatter(x,y)
 
 outputFile = 'output.txt'
