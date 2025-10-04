@@ -1,228 +1,167 @@
 import csv
-import matplotlib.pyplot as plt
-import os
+from collections import defaultdict
 
-# START OF HELPERS
-# Helper function to compute slope given 2 points in the form: p1 = [x, y] and p2 = [x, y]
-def computeSlope(p1, p2):
-    x1, y1 = p1
-    x2, y2 = p2
-    if x2-x1==0:
-        raise ValueError("Undefined Slope")
-    return (y2 - y1) / (x2 - x1)
-
+# ---------- geometry helpers ----------
 def orient2D(a, b, c):
-    # cross((b-a), (c-a)) ; >0: CCW, <0: CW, =0: collinear
+    # cross((b-a), (c-a)) ; >0: CCW, <0: CW
     return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0])
 
+def signedArea(poly):
+    s = 0.0
+    for i in range(len(poly)):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i+1) % len(poly)]
+        s += x1*y2 - x2*y1
+    return s
+
 def ensureCCW(poly):
-    if len(poly) >= 3:
-        area = 0.0
-        for i in range(len(poly)):
-            x1, y1 = poly[i]
-            x2, y2 = poly[(i+1) % len(poly)]
-            area += x1*y2 - x2*y1
-        if area < 0:  # polygon is clockwise
-            poly.reverse()
+    if len(poly) >= 3 and signedArea(poly) < 0:
+        poly.reverse()
     return poly
 
+def nextIdx(i, n):  return (i + 1) % n
+def prevIdx(i, n):  return (i - 1 + n) % n
+
+def rightmostIndex(h):
+    # max x, tie-break by smaller y
+    return max(range(len(h)), key=lambda k: (h[k][0], -h[k][1]))
+
+def leftmostIndex(h):
+    # min x, tie-break by smaller y
+    return min(range(len(h)), key=lambda k: (h[k][0],  h[k][1]))
+
+# ---------- tiny base hull for n <= 3 (returns CCW) ----------
 def smallHull(q):
     n = len(q)
     if n <= 2:
-        return q[:]                  # already sorted by x,y
+        return q[:]
     a, b, c = q
-    o = orient2D(a, b, c)
-    if o > 0:  return [a, b, c]      # CCW
-    if o < 0:  return [a, c, b]      # make CCW
-    return [a, c]                    # collinear -> keep endpoints only
+    s = orient2D(a, b, c)
+    if s > 0:  return [a, b, c]      # CCW
+    if s < 0:  return [a, c, b]      # flip to CCW
+    # (no three collinear per spec, so this case won't occur)
+    return [a, b, c]
 
+# ---------- upper / lower tangents (strict tests; spec says no collinear) ----------
 def upperTangent(L, R):
     """
-    Return (i, j): indices on L and R where the upper tangent touches.
-    L and R are CCW convex hulls, points as [x, y].
+    Return (i, j) for the upper tangent.
+    Assumes L and R are CCW hulls, with L to the left of R.
     """
     nL, nR = len(L), len(R)
-
-    # rightmost on L (max x, tie-break: smaller y)
-    i = 0
-    for k in range(1, nL):
-        if (L[k][0] > L[i][0]) or (L[k][0] == L[i][0] and L[k][1] < L[i][1]):
-            i = k
-
-    # leftmost on R (min x, tie-break: smaller y)
-    j = 0
-    for k in range(1, nR):
-        if (R[k][0] < R[j][0]) or (R[k][0] == R[j][0] and R[k][1] < R[j][1]):
-            j = k
-
-    # hill-climb to the upper tangent
-    changed = True
-    while changed:
-        changed = False
-        # move i CCW on L while turn (R[j] -> L[i] -> L[i+1]) is left
-        while True:
-            ip1 = (i + 1) % nL
-            ax, ay = R[j]; bx, by = L[i]; cx, cy = L[ip1]
-            cross = (bx - ax)*(cy - ay) - (by - ay)*(cx - ax)
-            if cross >= 0:
-                i = ip1; changed = True
-            else:
-                break
-        # move j CW on R while turn (L[i] -> R[j] -> R[j-1]) is right
-        while True:
-            jm1 = (j - 1) % nR
-            ax, ay = L[i]; bx, by = R[j]; cx, cy = R[jm1]
-            cross = (bx - ax)*(cy - ay) - (by - ay)*(cx - ax)
-            if cross <= 0:
-                j = jm1; changed = True
-            else:
-                break
+    i = rightmostIndex(L)
+    j = leftmostIndex(R)
+    while True:
+        moved = False
+        # move j forward on R while L[i] -> R[j] -> R[j+1] turns RIGHT (orient < 0)
+        while orient2D(L[i], R[j], R[nextIdx(j, nR)]) < 0:
+            j = nextIdx(j, nR); moved = True
+        # move i backward on L while R[j] -> L[i] -> L[i-1] turns LEFT (orient > 0)
+        while orient2D(R[j], L[i], L[prevIdx(i, nL)]) > 0:
+            i = prevIdx(i, nL); moved = True
+        if not moved:
+            break
     return i, j
 
 def lowerTangent(L, R):
     """
-    Return (i, j): indices on L and R where the lower tangent touches.
-    L and R are CCW convex hulls, points as [x, y].
+    Return (i, j) for the lower tangent.
+    Assumes L and R are CCW hulls, with L to the left of R.
     """
     nL, nR = len(L), len(R)
-
-    # rightmost on L (max x, tie-break: smaller y)
-    i = 0
-    for k in range(1, nL):
-        if (L[k][0] > L[i][0]) or (L[k][0] == L[i][0] and L[k][1] < L[i][1]):
-            i = k
-
-    # leftmost on R (min x, tie-break: smaller y)
-    j = 0
-    for k in range(1, nR):
-        if (R[k][0] < R[j][0]) or (R[k][0] == R[j][0] and R[k][1] < R[j][1]):
-            j = k
-
-    # hill-climb to the lower tangent
-    changed = True
-    while changed:
-        changed = False
-        # move i CW on L while turn (R[j] -> L[i] -> L[i-1]) is right
-        while True:
-            im1 = (i - 1) % nL
-            ax, ay = R[j]; bx, by = L[i]; cx, cy = L[im1]
-            cross = (bx - ax)*(cy - ay) - (by - ay)*(cx - ax)
-            if cross <= 0:
-                i = im1; changed = True
-            else:
-                break
-        # move j CCW on R while turn (L[i] -> R[j] -> R[j+1]) is left
-        while True:
-            jp1 = (j + 1) % nR
-            ax, ay = L[i]; bx, by = R[j]; cx, cy = R[jp1]
-            cross = (bx - ax)*(cy - ay) - (by - ay)*(cx - ax)
-            if cross >= 0:
-                j = jp1; changed = True
-            else:
-                break
+    i = rightmostIndex(L)
+    j = leftmostIndex(R)
+    while True:
+        moved = False
+        # move j backward on R while L[i] -> R[j] -> R[j-1] turns LEFT (orient > 0)
+        while orient2D(L[i], R[j], R[prevIdx(j, nR)]) > 0:
+            j = prevIdx(j, nR); moved = True
+        # move i forward on L while R[j] -> L[i] -> L[i+1] turns RIGHT (orient < 0)
+        while orient2D(R[j], L[i], L[nextIdx(i, nL)]) < 0:
+            i = nextIdx(i, nL); moved = True
+        if not moved:
+            break
     return i, j
 
-# END OF HELPERS
 
-# Functions that compute what we need
-### Divide the set of points into two “halves” A and B according to x-coordinate.
-def divide(points):
-    mid = len(points)//2
-    a = points[:mid]
-    b = points[mid:]
-    return a, b, points
+# ---------- merge using tangents: walk *outer* arcs in CCW ----------
+def mergeHullsUsingTangents(L, R, iU, jU, iL, jL):
+    nL, nR = len(L), len(R)
+    merged = []
 
-### Recursively compute the convex hull of A, and re-cursively compute the convex hull of B.
+    # L: CCW from lower -> upper (inclusive)
+    i = iL
+    merged.append(L[i])
+    while i != iU:
+        i = nextIdx(i, nL)
+        merged.append(L[i])
 
-# Let T be the line that connects A<->B where A is the rightmost point in CH(A) and B is the leftmost point in CH(B)
-def dcHull(pts):
-    n = len(pts)
+    # R: CCW from upper -> lower (inclusive)
+    j = jU
+    merged.append(R[j])
+    while j != jL:
+        j = nextIdx(j, nR)
+        merged.append(R[j])
+
+    return merged  # CCW, no repeated start
+
+# ---------- D&C hull on an x-sorted block ----------
+def dcHull(sortedPts):
+    n = len(sortedPts)
     if n <= 3:
-        return ensureCCW(smallHull(pts))
+        return ensureCCW(smallHull(sortedPts))
     mid = n // 2
-    left  = ensureCCW(dcHull(pts[:mid]))
-    right = ensureCCW(dcHull(pts[mid:]))
-
-    merged = mergeHulls(left, right)   # expects CCW inputs
+    left  = ensureCCW(dcHull(sortedPts[:mid]))
+    right = ensureCCW(dcHull(sortedPts[mid:]))
+    iU, jU = upperTangent(left, right)
+    iL, jL = lowerTangent(left, right)
+    merged = mergeHullsUsingTangents(left, right, iU, jU, iL, jL)
     return ensureCCW(merged)
 
-
-### Merge the two convex hulls to get the convex hull of A ∪ B.
-def mergeHulls(L, R):
-    # Robust merge: take the union of hull vertices and run monotone chain
-    pts = L + R
-
-    # dedupe coordinates (keep one of each (x,y))
-    seen = set()
-    uniq = []
-    for x, y in pts:
-        if (x, y) in seen: 
-            continue
-        seen.add((x, y))
-        uniq.append([x, y])
-
-    # monotone chain on the small set 'uniq'
-    uniq.sort(key=lambda p: (p[0], p[1]))
-
-    def cross(o, a, b):
-        return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
-
-    lower = []
-    for p in uniq:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-
-    upper = []
-    for p in reversed(uniq):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-
-    merged = lower[:-1] + upper[:-1]   # CCW hull
-    return merged
-
-
-### Merging: compute upper and lower tangent to the con-vex hulls in O(n) time
+# ---------- public: hull indices with deterministic anchor ----------
 def convexHullIndices(points):
-    # build a multi-map from (x,y) -> list of original indices (handles duplicates)
-    from collections import defaultdict
+    # map (x,y) -> original indices (handles duplicates, though spec says x are distinct)
     where = defaultdict(list)
     for idx, (x, y) in enumerate(points):
         where[(x, y)].append(idx)
-    for key in where:
-        where[key].sort(reverse=True)  # pop from end (O(1))
+    for k in where:
+        where[k].sort(reverse=True)   # pop() is O(1)
 
-    # sort by x,y and run D&C
+    # Points are already x-sorted per spec; sorting again is harmless
     ptsSorted = sorted(points, key=lambda p: (p[0], p[1]))
-    hullPts = dcHull(ptsSorted)   # hull as [[x,y], ...] in CCW order
+    mid = len(ptsSorted) // 2
 
-    # map hull points back to original indices
-    result = []
-    for x, y in hullPts:
-        result.append(where[(x, y)].pop())
-    return result
+    # build top-level left/right hulls and tangents
+    leftHull  = ensureCCW(dcHull(ptsSorted[:mid]))
+    rightHull = ensureCCW(dcHull(ptsSorted[mid:]))
+    iU, jU = upperTangent(leftHull, rightHull)
+    iL, jL = lowerTangent(leftHull, rightHull)
 
-def rotateToStart(indices, startAt):
-    if not indices: 
-        return indices
-    if startAt not in indices:
-        return indices
-    k = indices.index(startAt)
-    return indices[k:] + indices[:k]
+    # deterministic anchor = left endpoint of top-level lower tangent
+    anchorPoint = leftHull[iL]
 
+    # final merged hull (top-level)
+    hullPts = mergeHullsUsingTangents(leftHull, rightHull, iU, jU, iL, jL)
+
+    # rotate so list starts at anchorPoint
+    k = hullPts.index(anchorPoint)  # anchor must be on merged hull
+    hullPts = hullPts[k:] + hullPts[:k]
+
+    # map to original indices (0-based)
+    hullIdx = [ where[(x, y)].pop() for (x, y) in hullPts ]
+    return hullIdx
+
+# ---------- I/O ----------
 def readPointsCsv(path="input.csv"):
     pts = []
     with open(path, newline="") as f:
         rdr = csv.reader(f)
         for row in rdr:
-            if not row:            # blank line
-                continue
+            if not row: continue
             try:
-                x = float(row[0].strip())
-                y = float(row[1].strip())
-            except ValueError:     # header like "x,y"
-                continue
+                x = float(row[0].strip()); y = float(row[1].strip())
+            except ValueError:
+                continue   # skip header/bad rows
             pts.append([x, y])
     return pts
 
@@ -231,51 +170,7 @@ def writeOnePerLine(path, indices):
         for i in indices:
             f.write(f"{i}\n")
 
-def leftmostLowestIndex(points, hullIndices):
-    return min(hullIndices, key=lambda i: (points[i][0], points[i][1]))
-
-# --- small monotone-chain hull on an arbitrary point set (CCW, no repeats) ---
-def monotoneChainHull(pts):
-    pts = sorted(pts, key=lambda p: (p[0], p[1]))
-    def cross(o, a, b):
-        return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
-    lower = []
-    for p in pts:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    upper = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return lower[:-1] + upper[:-1]   # CCW
-
-# --- find print anchor = left endpoint of the TOP-LEVEL lower tangent ---
-def topLevelAnchorIndex(points):
-    # map (x,y) -> original indices for reverse-lookup
-    from collections import defaultdict
-    where = defaultdict(list)
-    for idx, (x, y) in enumerate(points):
-        where[(x, y)].append(idx)
-    for k in where: where[k].sort(reverse=True)
-
-    # split by x, build top-level hulls with monotone chain (robust)
-    ptsSorted = sorted(points, key=lambda p: (p[0], p[1]))
-    mid = len(ptsSorted) // 2
-    L = monotoneChainHull(ptsSorted[:mid])
-    R = monotoneChainHull(ptsSorted[mid:])
-
-    # compute LOWER tangent; allow sliding over collinear edges
-    # (your lowerTangent already uses <= / >= in your latest version, keep that)
-    iLw, jLw = lowerTangent(L, R)
-
-    # map the left endpoint of the lower tangent back to the original index
-    ax, ay = L[iLw]
-    return where[(ax, ay)].pop()  # original 0-based index
-
-
-# Main Logic goes here:
+# ---------- main ----------
 if __name__ == "__main__":
     import sys
     inPath  = sys.argv[1] if len(sys.argv) > 1 else "input.csv"
@@ -284,18 +179,5 @@ if __name__ == "__main__":
     points = readPointsCsv(inPath)
     hullIdx = convexHullIndices(points)
 
-    # Make the print order deterministic: start at the leftmost-lowest vertex
-    if hullIdx:
-        anchor = topLevelAnchorIndex(points)     # left endpoint of top-level lower tangent
-        if anchor in hullIdx:                    # should be; guard just in case
-            k = hullIdx.index(anchor)
-            hullIdx = hullIdx[k:] + hullIdx[:k]
-
-
-    # If you want to match your sample exactly on your provided input.csv:
-    # (will only rotate if 22 is on the hull)
-    #hullIdx = rotateToStart(hullIdx, 22)
-
-    # stdout and file
     print("\n".join(str(i) for i in hullIdx))
     writeOnePerLine(outPath, hullIdx)
