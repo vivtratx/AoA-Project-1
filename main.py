@@ -211,23 +211,91 @@ def rotateToStart(indices, startAt):
     k = indices.index(startAt)
     return indices[k:] + indices[:k]
 
+def readPointsCsv(path="input.csv"):
+    pts = []
+    with open(path, newline="") as f:
+        rdr = csv.reader(f)
+        for row in rdr:
+            if not row:            # blank line
+                continue
+            try:
+                x = float(row[0].strip())
+                y = float(row[1].strip())
+            except ValueError:     # header like "x,y"
+                continue
+            pts.append([x, y])
+    return pts
+
+def writeOnePerLine(path, indices):
+    with open(path, "w") as f:
+        for i in indices:
+            f.write(f"{i}\n")
+
+def leftmostLowestIndex(points, hullIndices):
+    return min(hullIndices, key=lambda i: (points[i][0], points[i][1]))
+
+# --- small monotone-chain hull on an arbitrary point set (CCW, no repeats) ---
+def monotoneChainHull(pts):
+    pts = sorted(pts, key=lambda p: (p[0], p[1]))
+    def cross(o, a, b):
+        return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]   # CCW
+
+# --- find print anchor = left endpoint of the TOP-LEVEL lower tangent ---
+def topLevelAnchorIndex(points):
+    # map (x,y) -> original indices for reverse-lookup
+    from collections import defaultdict
+    where = defaultdict(list)
+    for idx, (x, y) in enumerate(points):
+        where[(x, y)].append(idx)
+    for k in where: where[k].sort(reverse=True)
+
+    # split by x, build top-level hulls with monotone chain (robust)
+    ptsSorted = sorted(points, key=lambda p: (p[0], p[1]))
+    mid = len(ptsSorted) // 2
+    L = monotoneChainHull(ptsSorted[:mid])
+    R = monotoneChainHull(ptsSorted[mid:])
+
+    # compute LOWER tangent; allow sliding over collinear edges
+    # (your lowerTangent already uses <= / >= in your latest version, keep that)
+    iLw, jLw = lowerTangent(L, R)
+
+    # map the left endpoint of the lower tangent back to the original index
+    ax, ay = L[iLw]
+    return where[(ax, ay)].pop()  # original 0-based index
+
+
 # Main Logic goes here:
-points = []
-x = []
-y = []
+if __name__ == "__main__":
+    import sys
+    inPath  = sys.argv[1] if len(sys.argv) > 1 else "input.csv"
+    outPath = sys.argv[2] if len(sys.argv) > 2 else "output.txt"
 
-with open('input.csv', newline='') as file:
-    rdr = csv.reader(file)
-    for row in rdr:
-        if not row:
-            continue
-        try:
-            x = float(row[0].strip())
-            y = float(row[1].strip())
-        except ValueError:
-            continue
-        points.append([x, y])
+    points = readPointsCsv(inPath)
+    hullIdx = convexHullIndices(points)
 
-hullIdx = convexHullIndices(points)
-hullIdx = rotateToStart(hullIdx, 22)
-print("\n".join(str(i) for i in hullIdx))
+    # Make the print order deterministic: start at the leftmost-lowest vertex
+    if hullIdx:
+        anchor = topLevelAnchorIndex(points)     # left endpoint of top-level lower tangent
+        if anchor in hullIdx:                    # should be; guard just in case
+            k = hullIdx.index(anchor)
+            hullIdx = hullIdx[k:] + hullIdx[:k]
+
+
+    # If you want to match your sample exactly on your provided input.csv:
+    # (will only rotate if 22 is on the hull)
+    #hullIdx = rotateToStart(hullIdx, 22)
+
+    # stdout and file
+    print("\n".join(str(i) for i in hullIdx))
+    writeOnePerLine(outPath, hullIdx)
