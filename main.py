@@ -77,7 +77,7 @@ def merge_hulls(L: List[Point], R: List[Point]) -> List[Point]:          # Merge
     iU, jU = getUpperTangent(L, R)
     iL, jL = getLowerTangent(L, R)
 
-    merged: List[Point] = []
+    merged = []
 
     # walk L from upper to lower CCW
     i = iU
@@ -106,7 +106,7 @@ def dac(points_sorted_by_x: List[Point]) -> List[Point]:  # Recursively compute 
     return merge_hulls(L, R)
 
 def read_points_csv(path: str) -> List[Point]:           # Reads the points from the CSV file
-    pts: List[Point] = []
+    pts = []
     with open(path, "r") as f:
         for i, row in enumerate(csv.reader(f)):
             x, y = float(row[0]), float(row[1])
