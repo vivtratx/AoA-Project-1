@@ -1,20 +1,16 @@
-# main.py - Divide & Conquer convex hull - writes indices to output.txt
-
 import csv
 import sys
 from typing import List, Tuple
 
-Point = Tuple[float, float, int]  # (x, y, original_index)
+Point = Tuple[float, float, int]                            # Represents points as (x, y, original_index)
 
-# -------- geometry --------
-def orient(a: Point, b: Point, c: Point) -> float:
-    # cross( b-a, c-a )
+def orient(a: Point, b: Point, c: Point) -> float:          # cross( b-a, c-a )
     return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 
-def is_ccw(a: Point, b: Point, c: Point) -> bool:
+def is_ccw(a: Point, b: Point, c: Point) -> bool:           #checks if points are counter clockwise, true if a->b->c is a left turn
     return orient(a, b, c) > 0
 
-def ccw_sort3(pts: List[Point]) -> List[Point]:
+def ccw_sort3(pts: List[Point]) -> List[Point]:             #sorts points in counter clockwise order, no collinear triples per spec
     a, b, c = pts
     if is_ccw(a, b, c): return [a, b, c]
     if is_ccw(a, c, b): return [a, c, b]
@@ -23,10 +19,10 @@ def ccw_sort3(pts: List[Point]) -> List[Point]:
     if is_ccw(c, a, b): return [c, a, b]
     return [c, b, a]
 
-def next_i(i: int, n: int) -> int: return (i + 1) % n
-def prev_i(i: int, n: int) -> int: return (i - 1) % n
+def next_i(i: int, n: int) -> int: return (i + 1) % n        #move one step forward
+def prev_i(i: int, n: int) -> int: return (i - 1) % n        #move one step backward
 
-def rightmost_idx(poly: List[Point]) -> int:
+def rightmost_idx(poly: List[Point]) -> int:                 #checks for the rightmost index for d&c
     # max x, tie-breaker: higher y
     k = 0
     for i in range(1, len(poly)):
@@ -34,7 +30,7 @@ def rightmost_idx(poly: List[Point]) -> int:
             k = i
     return k
 
-def leftmost_idx(poly: List[Point]) -> int:
+def leftmost_idx(poly: List[Point]) -> int:                  #checks for the leftmost index for d&c
     # min x, tie-breaker: lower y
     k = 0
     for i in range(1, len(poly)):
@@ -42,8 +38,7 @@ def leftmost_idx(poly: List[Point]) -> int:
             k = i
     return k
 
-# -------- tangents for CCW hulls --------
-def getUpperTangent(L: List[Point], R: List[Point]) -> Tuple[int, int]:
+def getUpperTangent(L: List[Point], R: List[Point]) -> Tuple[int, int]:    #computes upper tangent between L and R
     i = rightmost_idx(L)
     j = leftmost_idx(R)
     nL, nR = len(L), len(R)
@@ -59,7 +54,7 @@ def getUpperTangent(L: List[Point], R: List[Point]) -> Tuple[int, int]:
             break
     return i, j
 
-def getLowerTangent(L: List[Point], R: List[Point]) -> Tuple[int, int]:
+def getLowerTangent(L: List[Point], R: List[Point]) -> Tuple[int, int]:   #computes lower tanger between L and R
     i = rightmost_idx(L)
     j = leftmost_idx(R)
     nL, nR = len(L), len(R)
@@ -75,8 +70,7 @@ def getLowerTangent(L: List[Point], R: List[Point]) -> Tuple[int, int]:
             break
     return i, j
 
-# -------- merge two CCW hulls --------
-def merge_hulls(L: List[Point], R: List[Point]) -> List[Point]:
+def merge_hulls(L: List[Point], R: List[Point]) -> List[Point]:          # Merges CCW hull L and CCW hull R into CCW hull
     if not L: return R[:]
     if not R: return L[:]
 
@@ -101,8 +95,7 @@ def merge_hulls(L: List[Point], R: List[Point]) -> List[Point]:
 
     return merged
 
-# -------- divide and conquer --------
-def dac(points_sorted_by_x: List[Point]) -> List[Point]:
+def dac(points_sorted_by_x: List[Point]) -> List[Point]:  # Recursively compute the convex hull of points_sorted_by_x / doing basic divide and conqure
     n = len(points_sorted_by_x)
     if n <= 1: return points_sorted_by_x[:]
     if n == 2: return points_sorted_by_x[:]
@@ -112,8 +105,7 @@ def dac(points_sorted_by_x: List[Point]) -> List[Point]:
     R = dac(points_sorted_by_x[mid:])
     return merge_hulls(L, R)
 
-# -------- IO --------
-def read_points_csv(path: str) -> List[Point]:
+def read_points_csv(path: str) -> List[Point]:           # Reads the points from the CSV file
     pts: List[Point] = []
     with open(path, "r") as f:
         for i, row in enumerate(csv.reader(f)):
@@ -123,13 +115,13 @@ def read_points_csv(path: str) -> List[Point]:
     pts.sort(key=lambda p: (p[0], p[1]))
     return pts
 
-def write_indices(hull: List[Point], path: str) -> None:
+def write_indices(hull: List[Point], path: str) -> None:     # Writes the points to the output.txt file
     with open(path, "w") as f:
         for _, _, idx in hull:
             f.write(f"{idx}\n")
 
-def main():
-    in_path = sys.argv[1] if len(sys.argv) > 1 else "input.csv"
+def main():                                                 #...It's main...idk what to tell you...
+    in_path = sys.argv[1] if len(sys.argv) > 1 else "input.csv"   
     pts = read_points_csv(in_path)
     hull = dac(pts)
     write_indices(hull, "output.txt")
